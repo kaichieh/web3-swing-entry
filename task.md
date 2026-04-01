@@ -278,3 +278,27 @@ Current finding:
 - BTC remains unchanged and reports `no_short_regime_gate_for_asset`.
 - On the current ETH live bar dated `2026-04-01`, the raw short score still cleared threshold, but the regime gate blocked it because both moving-average gaps were positive. The final signal resolved to `long` with decision reason `long_wins_after_short_regime_block`.
 - Conclusion: the repo now uses the strongest regime-filter finding as a live safety rule instead of leaving it as research-only.
+
+### Experiment 8: ETH With BTC Context Features
+
+Problem:
+
+- ETH may be missing cross-asset context from BTC leadership, especially for short-horizon relative-strength and regime shifts
+
+What to test:
+
+- merge BTC spot-derived context features into the ETH dataset
+- compare an all-context stack against a smaller relative-only subset
+
+Success condition:
+
+- improve ETH long holdout quality, especially under walk-forward evaluation
+
+Current finding:
+
+- Added BTC spot context into the ETH dataset through `btc_*` and `eth_btc_*` experimental features.
+- The full BTC-context stack improved ETH long single-split test balanced accuracy to `0.5236`, better than the earlier Binance full-stack result (`0.4891`), but it still missed the promotion gate and did not help ETH short.
+- A smaller relative-only subset (`btc_ret_7`, `btc_sma_gap_10`, `btc_rsi_7`, `eth_btc_ret_spread_7`, `eth_btc_relative_momentum_7`, `eth_btc_trend_agreement`) produced the best BTC-context walk-forward ETH long result so far: `0.5168` average test balanced accuracy.
+- That walk-forward result is still below the `0.53` promotion line, but it is better than the previous ETH long walk-forward references (`0.5062` on the wider-barrier refit and `0.5109` on the full BTC-context stack).
+- Conclusion: BTC context is modestly useful for ETH long when kept compact and relative-strength-focused.
+- The repo now encodes this as the ETH long default preset in `assets/eth/config.json`, so `train.py`, `predict_latest.py`, `chart_signals.py`, and the walk-forward / regime evaluators automatically use the compact BTC-relative subset for ETH long unless `AR_EXTRA_BASE_FEATURES` overrides it.

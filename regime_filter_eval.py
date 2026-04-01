@@ -94,7 +94,7 @@ def regime_candidates(train_frame, eval_frame, side: str) -> dict[str, np.ndarra
 
 
 def evaluate_regimes(frame, side: str) -> list[RegimeResult]:
-    feature_names = assemble_feature_names(frame.columns.tolist())
+    feature_names = assemble_feature_names(frame.columns.tolist(), side)
     windows = build_window_slices(len(frame))
     target_column = get_target_column(side)
     realized_return_column = get_realized_return_column(side)

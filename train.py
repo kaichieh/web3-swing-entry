@@ -81,6 +81,30 @@ def get_env_csv(name: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
     return tuple(part.strip() for part in value.split(",") if part.strip())
 
 
+def get_default_extra_base_features(side: str) -> tuple[str, ...]:
+    config = ac.load_asset_config()
+    side_map = config.get("default_extra_base_features_by_side", {})
+    if isinstance(side_map, dict):
+        candidate = side_map.get(side)
+        if isinstance(candidate, list):
+            return tuple(str(item).strip() for item in candidate if str(item).strip())
+    candidate = config.get("default_extra_base_features", [])
+    if isinstance(candidate, list):
+        return tuple(str(item).strip() for item in candidate if str(item).strip())
+    return ()
+
+
+def get_active_extra_base_features(side: str) -> tuple[str, ...]:
+    env_value = os.getenv("AR_EXTRA_BASE_FEATURES")
+    if env_value is not None and env_value.strip():
+        return get_env_csv("AR_EXTRA_BASE_FEATURES")
+    return get_default_extra_base_features(side)
+
+
+def get_active_drop_features() -> tuple[str, ...]:
+    return get_env_csv("AR_DROP_FEATURES")
+
+
 def get_env_interaction_pairs(name: str, default: tuple[tuple[str, str], ...] = ()) -> tuple[tuple[str, str], ...]:
     value = os.getenv(name)
     if value is None or not value.strip():
@@ -149,12 +173,14 @@ def add_interaction_terms(
 
 def assemble_feature_matrices(
     splits: dict[str, object],
+    side: str,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
     feature_names = list(FEATURE_COLUMNS)
+    extra_base_features = set(get_active_extra_base_features(side))
     for column in EXPERIMENTAL_FEATURE_COLUMNS:
-        if column in splits["train"].frame.columns and column in get_env_csv("AR_EXTRA_BASE_FEATURES"):
+        if column in splits["train"].frame.columns and column in extra_base_features:
             feature_names.append(column)
-    drop_features = set(get_env_csv("AR_DROP_FEATURES"))
+    drop_features = set(get_active_drop_features())
     feature_names = [name for name in feature_names if name not in drop_features]
     matrices = (
         splits["train"].frame[feature_names].to_numpy(dtype=np.float32),
@@ -175,7 +201,7 @@ def assemble_feature_matrices(
 
 
 def build_feature_names(splits: dict[str, object]) -> list[str]:
-    _, _, _, feature_names = assemble_feature_matrices(splits)
+    _, _, _, feature_names = assemble_feature_matrices(splits, get_side())
     return feature_names
 
 
@@ -242,7 +268,7 @@ def fit_model(side: str) -> tuple[TrainedModel, dict[str, object]]:
     realized_return_column = get_realized_return_column(side)
 
     splits = load_splits(target_column=target_column)
-    train_x, validation_x, test_x, feature_names = assemble_feature_matrices(splits)
+    train_x, validation_x, test_x, feature_names = assemble_feature_matrices(splits, side)
     train_y = splits["train"].labels
     validation_y = splits["validation"].labels
 

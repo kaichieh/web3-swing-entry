@@ -10,7 +10,7 @@ import numpy as np
 
 import asset_config as ac
 import train as tr
-from prepare import add_price_features, download_symbol_prices
+from prepare import add_cross_asset_context_features, add_price_features, download_symbol_prices
 
 NO_TRADE_MARGIN = 0.03
 WEAK_SIGNAL_MARGIN = 0.02
@@ -148,14 +148,17 @@ def main() -> None:
     asset_key = ac.get_asset_key()
     raw_prices = download_symbol_prices(asset_key)
     live_features = add_price_features(raw_prices)
+    live_features = add_cross_asset_context_features(live_features, asset_key)
 
     long_model, long_state = tr.fit_model("long")
     short_model, short_state = tr.fit_model("short")
-    feature_names = list(long_model.feature_names)
+    long_feature_names = list(long_model.feature_names)
+    short_feature_names = list(short_model.feature_names)
+    required_feature_names = sorted(set(long_feature_names) | set(short_feature_names))
 
-    latest_live = live_features.dropna(subset=feature_names).iloc[[-1]].copy()
-    long_vector, latest_snapshot = score_row(feature_names, long_state["splits"]["train"].frame, latest_live)
-    short_vector, _ = score_row(feature_names, short_state["splits"]["train"].frame, latest_live)
+    latest_live = live_features.dropna(subset=required_feature_names).iloc[[-1]].copy()
+    long_vector, latest_snapshot = score_row(long_feature_names, long_state["splits"]["train"].frame, latest_live)
+    short_vector, _ = score_row(short_feature_names, short_state["splits"]["train"].frame, latest_live)
 
     long_probability = float(tr.sigmoid(long_vector @ long_model.weights)[0])
     short_probability = float(tr.sigmoid(short_vector @ short_model.weights)[0])

@@ -10,7 +10,7 @@ from html import escape
 import asset_config as ac
 import predict_latest as pl
 import train as tr
-from prepare import add_price_features, download_symbol_prices
+from prepare import add_cross_asset_context_features, add_price_features, download_symbol_prices
 
 DEFAULT_LOOKBACK_BARS = 180
 SIGNAL_COLORS = {
@@ -30,20 +30,23 @@ def build_chart_rows(lookback_bars: int) -> tuple[list[dict[str, object]], dict[
     tr.set_seed(tr.get_env_int("AR_SEED", tr.SEED))
     raw_prices = download_symbol_prices(asset_key)
     live_features = add_price_features(raw_prices)
+    live_features = add_cross_asset_context_features(live_features, asset_key)
 
     long_model, long_state = tr.fit_model("long")
     short_model, short_state = tr.fit_model("short")
-    feature_names = list(long_model.feature_names)
+    long_feature_names = list(long_model.feature_names)
+    short_feature_names = list(short_model.feature_names)
+    required_feature_names = sorted(set(long_feature_names) | set(short_feature_names))
 
     train_frame_long = long_state["splits"]["train"].frame
     train_frame_short = short_state["splits"]["train"].frame
-    scored = live_features.dropna(subset=feature_names).tail(lookback_bars).reset_index(drop=True)
+    scored = live_features.dropna(subset=required_feature_names).tail(lookback_bars).reset_index(drop=True)
 
     rows: list[dict[str, object]] = []
     for idx in range(len(scored)):
         row = scored.iloc[[idx]]
-        long_vector, snapshot = pl.score_row(feature_names, train_frame_long, row)
-        short_vector, _ = pl.score_row(feature_names, train_frame_short, row)
+        long_vector, snapshot = pl.score_row(long_feature_names, train_frame_long, row)
+        short_vector, _ = pl.score_row(short_feature_names, train_frame_short, row)
         long_probability = float(tr.sigmoid(long_vector @ long_model.weights)[0])
         short_probability = float(tr.sigmoid(short_vector @ short_model.weights)[0])
         signal, decision_info = pl.choose_final_signal(

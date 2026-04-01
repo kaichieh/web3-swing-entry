@@ -79,6 +79,16 @@ EXPERIMENTAL_FEATURE_COLUMNS = [
     "up_day_ratio_7",
     "close_location_7",
     "atr_pct_7",
+    "btc_ret_3",
+    "btc_ret_7",
+    "btc_sma_gap_5",
+    "btc_sma_gap_10",
+    "btc_volatility_7",
+    "btc_drawdown_7",
+    "btc_rsi_7",
+    "eth_btc_ret_spread_7",
+    "eth_btc_relative_momentum_7",
+    "eth_btc_trend_agreement",
 ]
 
 
@@ -111,6 +121,7 @@ def get_runtime_config(asset_key: str | None = None) -> dict[str, object]:
         "symbol": str(config["symbol"]),
         "binance_symbol": str(config["binance_symbol"]),
         "binance_start_date": str(config["binance_start_date"]),
+        "context_asset_keys": list(config.get("context_asset_keys", [])),
         "horizon_bars": get_env_int("AR_HORIZON_BARS", int(config["horizon_bars"])),
         "long_up_barrier": get_env_float("AR_LONG_UP_BARRIER", float(config["long_up_barrier"])),
         "long_down_barrier": get_env_float("AR_LONG_DOWN_BARRIER", float(config["long_down_barrier"])),
@@ -703,9 +714,57 @@ def add_taker_flow_features(frame: pd.DataFrame, taker_flow_frame: pd.DataFrame 
     return merged
 
 
+def add_cross_asset_context_features(frame: pd.DataFrame, asset_key: str | None = None) -> pd.DataFrame:
+    key = asset_key or ac.get_asset_key()
+    config = get_runtime_config(key)
+    context_asset_keys = [str(item).lower() for item in config.get("context_asset_keys", [])]
+    if not context_asset_keys:
+        return frame
+
+    merged = frame.copy()
+    for context_key in context_asset_keys:
+        if context_key == key:
+            continue
+        context_prices = download_symbol_prices(context_key)
+        context_features = add_price_features(context_prices)
+        prefix = f"{context_key}_"
+        keep_columns = [
+            "date",
+            "ret_3",
+            "ret_7",
+            "sma_gap_5",
+            "sma_gap_10",
+            "volatility_7",
+            "drawdown_7",
+            "rsi_7",
+        ]
+        renamed = context_features[keep_columns].rename(
+            columns={column: f"{prefix}{column}" for column in keep_columns if column != "date"}
+        )
+        merged = merged.merge(renamed, on="date", how="left")
+        for column in renamed.columns:
+            if column != "date":
+                merged[column] = merged[column].fillna(0.0)
+
+    if "btc_ret_7" in merged.columns:
+        merged["eth_btc_ret_spread_7"] = merged["ret_7"] - merged["btc_ret_7"]
+        merged["eth_btc_relative_momentum_7"] = (1.0 + merged["ret_7"]) / (1.0 + merged["btc_ret_7"] + 1e-10) - 1.0
+        merged["eth_btc_trend_agreement"] = np.where(
+            np.sign(merged["sma_gap_5"]) == np.sign(merged["btc_sma_gap_5"]),
+            1.0,
+            0.0,
+        )
+    else:
+        merged["eth_btc_ret_spread_7"] = 0.0
+        merged["eth_btc_relative_momentum_7"] = 0.0
+        merged["eth_btc_trend_agreement"] = 0.0
+    return merged
+
+
 def add_features(frame: pd.DataFrame, asset_key: str | None = None) -> pd.DataFrame:
     config = get_runtime_config(asset_key)
     df = add_price_features(frame)
+    df = add_cross_asset_context_features(df, asset_key)
     funding_frame = download_funding_rates(asset_key)
     open_interest_frame = download_open_interest(asset_key)
     taker_flow_frame = download_taker_flow(asset_key)
@@ -764,6 +823,7 @@ def save_processed_dataset(df: pd.DataFrame, asset_key: str | None = None) -> No
         "asset_key": str(config["asset_key"]),
         "symbol": str(config["symbol"]),
         "binance_symbol": str(config["binance_symbol"]),
+        "context_asset_keys": list(config["context_asset_keys"]),
         "price_source": "binance_spot_klines",
         "funding_source": "binance_funding_rate_history",
         "open_interest_source": "binance_open_interest_hist_1d_last_month",

@@ -15,11 +15,7 @@ import numpy as np
 import asset_config as ac
 from prepare import get_runtime_config, load_dataset_frame
 from train import classification_stats, get_env_int, get_side, get_target_column, get_realized_return_column, set_seed
-from walkforward_eval import (
-    assemble_feature_names,
-    build_window_slices,
-    select_threshold_by_balanced_accuracy,
-)
+from walkforward_eval import assemble_feature_names, build_window_slices, select_threshold_by_balanced_accuracy
 
 DEFAULT_MAX_DEPTH = 2
 DEFAULT_MIN_LEAF = 40
@@ -148,7 +144,7 @@ def compute_metrics_from_probabilities(
 
 
 def evaluate_walkforward(frame, side: str) -> dict[str, object]:
-    feature_names = assemble_feature_names(frame.columns.tolist())
+    feature_names = assemble_feature_names(frame.columns.tolist(), side)
     max_depth = get_env_int("AR_TREE_MAX_DEPTH", DEFAULT_MAX_DEPTH)
     min_leaf = get_env_int("AR_TREE_MIN_LEAF", DEFAULT_MIN_LEAF)
     num_bins = get_env_int("AR_TREE_NUM_BINS", DEFAULT_NUM_BINS)

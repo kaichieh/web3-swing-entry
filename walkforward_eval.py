@@ -29,7 +29,8 @@ from train import (
     add_interaction_terms,
     classification_stats,
     compute_metrics,
-    get_env_csv,
+    get_active_drop_features,
+    get_active_extra_base_features,
     get_env_float,
     get_env_int,
     get_side,
@@ -69,13 +70,13 @@ class FoldResult:
     test_positive_rate: float
 
 
-def assemble_feature_names(frame_columns: list[str]) -> list[str]:
+def assemble_feature_names(frame_columns: list[str], side: str) -> list[str]:
     feature_names = list(FEATURE_COLUMNS)
-    extra_base_features = set(get_env_csv("AR_EXTRA_BASE_FEATURES"))
+    extra_base_features = set(get_active_extra_base_features(side))
     for column in EXPERIMENTAL_FEATURE_COLUMNS:
         if column in frame_columns and column in extra_base_features:
             feature_names.append(column)
-    drop_features = set(get_env_csv("AR_DROP_FEATURES"))
+    drop_features = set(get_active_drop_features())
     feature_names = [name for name in feature_names if name not in drop_features]
     return feature_names
 
@@ -192,7 +193,7 @@ def fit_window_model(
 
 
 def evaluate_fold(frame, window: WindowSlice, side: str, fold_id: int) -> FoldResult:
-    feature_names = assemble_feature_names(frame.columns.tolist())
+    feature_names = assemble_feature_names(frame.columns.tolist(), side)
     train_frame = frame.iloc[window.start:window.train_end].copy()
     validation_frame = frame.iloc[window.train_end:window.valid_end].copy()
     test_frame = frame.iloc[window.valid_end:window.test_end].copy()

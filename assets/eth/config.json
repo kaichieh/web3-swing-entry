@@ -3,6 +3,17 @@
   "symbol": "ETH-USD",
   "binance_symbol": "ETHUSDT",
   "binance_start_date": "2017-01-01",
+  "context_asset_keys": ["btc"],
+  "default_extra_base_features_by_side": {
+    "long": [
+      "btc_ret_7",
+      "btc_sma_gap_10",
+      "btc_rsi_7",
+      "eth_btc_ret_spread_7",
+      "eth_btc_relative_momentum_7",
+      "eth_btc_trend_agreement"
+    ]
+  },
   "horizon_bars": 7,
   "long_up_barrier": 0.06,
   "long_down_barrier": -0.03,

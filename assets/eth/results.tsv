@@ -12,3 +12,6 @@ commit_id	description	validation_long_f1	validation_long_bal_acc	validation_shor
 4468a2c	walkforward_eval_h7_wider_7pct_3p5pct_v1	0.4795	0.5673	0.4251	0.5458	0.3531	0.5062	0.3555	0.4969	discard
 4468a2c	tree_walkforward_h7_wider_7pct_3p5pct_v1	0.5539	0.5762	0.4412	0.5181	0.4326	0.5099	0.4274	0.5005	discard
 4468a2c	regime_filter_h7_wider_7pct_3p5pct_v1	na	0.5673	na	0.5045	na	0.5062	na	0.5032	discard
+334997b	eth_btc_context_all_features_long_v1	0.5857	0.5207	0.8256	0.5065	0.5293	0.5236	0.7550	0.4977	discard
+334997b	eth_btc_relative_only_long_v1	0.5842	0.5197	na	na	0.5265	0.5201	na	na	discard
+334997b	eth_btc_relative_only_walkforward_long_v1	0.4735	0.5529	na	na	0.3860	0.5168	na	na	discard
