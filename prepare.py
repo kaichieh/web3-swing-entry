@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -54,6 +55,19 @@ EXPERIMENTAL_FEATURE_COLUMNS = [
     "ret_14",
     "sma_gap_14",
     "volatility_10",
+    "funding_rate_1d",
+    "funding_rate_3d_mean",
+    "funding_rate_7d_mean",
+    "funding_rate_z_7",
+    "open_interest",
+    "open_interest_value",
+    "open_interest_change_1",
+    "open_interest_change_3",
+    "open_interest_z_7",
+    "taker_buy_sell_ratio",
+    "taker_buy_volume",
+    "taker_sell_volume",
+    "taker_flow_3d_mean",
     "range_z_7",
     "inside_bar",
     "outside_bar",
@@ -95,6 +109,8 @@ def get_runtime_config(asset_key: str | None = None) -> dict[str, object]:
     return {
         "asset_key": str(config["asset_key"]),
         "symbol": str(config["symbol"]),
+        "binance_symbol": str(config["binance_symbol"]),
+        "binance_start_date": str(config["binance_start_date"]),
         "horizon_bars": get_env_int("AR_HORIZON_BARS", int(config["horizon_bars"])),
         "long_up_barrier": get_env_float("AR_LONG_UP_BARRIER", float(config["long_up_barrier"])),
         "long_down_barrier": get_env_float("AR_LONG_DOWN_BARRIER", float(config["long_down_barrier"])),
@@ -121,11 +137,60 @@ def normalize_ohlcv_frame(frame: pd.DataFrame) -> pd.DataFrame:
     return normalized
 
 
-def yahoo_chart_url(symbol: str) -> str:
-    return (
-        f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-        "?period1=0&period2=9999999999&interval=1d&includePrePost=false&events=div%2Csplits"
-    )
+def normalize_spot_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    normalized = frame.copy()
+    normalized.columns = [column.lower() for column in normalized.columns]
+    expected = [
+        "date",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "quote_asset_volume",
+        "trade_count",
+        "taker_buy_base_volume",
+        "taker_buy_quote_volume",
+    ]
+    missing = [column for column in expected if column not in normalized.columns]
+    if missing:
+        raise RuntimeError(f"Downloaded Binance spot dataset missing columns: {missing}")
+    normalized = normalized[expected].copy()
+    normalized["date"] = pd.to_datetime(normalized["date"])
+    numeric_columns = [column for column in expected if column != "date"]
+    for column in numeric_columns:
+        normalized[column] = pd.to_numeric(normalized[column], errors="coerce")
+    normalized = normalized.dropna(subset=["open", "high", "low", "close", "volume"])
+    normalized = normalized.sort_values("date").drop_duplicates(subset="date", keep="last").reset_index(drop=True)
+    return normalized
+
+
+def binance_klines_url(symbol: str, start_time_ms: int | None = None, limit: int = 1000) -> str:
+    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1d&limit={limit}"
+    if start_time_ms is not None:
+        url += f"&startTime={start_time_ms}"
+    return url
+
+
+def binance_funding_url(symbol: str, start_time_ms: int | None = None, limit: int = 1000) -> str:
+    url = f"https://fapi.binance.com/fapi/v1/fundingRate?symbol={symbol}&limit={limit}"
+    if start_time_ms is not None:
+        url += f"&startTime={start_time_ms}"
+    return url
+
+
+def binance_open_interest_hist_url(symbol: str, start_time_ms: int | None = None, limit: int = 500) -> str:
+    url = f"https://fapi.binance.com/futures/data/openInterestHist?symbol={symbol}&period=1d&limit={limit}"
+    if start_time_ms is not None:
+        url += f"&startTime={start_time_ms}"
+    return url
+
+
+def binance_taker_flow_url(symbol: str, start_time_ms: int | None = None, limit: int = 500) -> str:
+    url = f"https://fapi.binance.com/futures/data/takerlongshortRatio?symbol={symbol}&period=1d&limit={limit}"
+    if start_time_ms is not None:
+        url += f"&startTime={start_time_ms}"
+    return url
 
 
 def fetch_text(url: str, *, accept_json: bool = False) -> str:
@@ -138,40 +203,242 @@ def fetch_text(url: str, *, accept_json: bool = False) -> str:
         return response.read().decode(charset)
 
 
-def download_prices_from_yahoo(symbol: str) -> pd.DataFrame:
-    payload = json.loads(fetch_text(yahoo_chart_url(symbol), accept_json=True))
-    result = payload["chart"]["result"][0]
-    quote = result["indicators"]["quote"][0]
+def fetch_json(url: str) -> object:
+    return json.loads(fetch_text(url, accept_json=True))
+
+
+def download_prices_from_binance(symbol: str, start_date: str) -> pd.DataFrame:
+    start_time_ms = int(datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc).timestamp() * 1000)
+    now_ms = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
+    rows: list[list[object]] = []
+
+    while start_time_ms < now_ms:
+        payload = fetch_json(binance_klines_url(symbol, start_time_ms=start_time_ms, limit=1000))
+        if not isinstance(payload, list) or not payload:
+            break
+        rows.extend(payload)
+        last_open_time = int(payload[-1][0])
+        next_open_time = last_open_time + 24 * 60 * 60 * 1000
+        if next_open_time <= start_time_ms:
+            break
+        start_time_ms = next_open_time
+        if len(payload) < 1000:
+            break
+
+    if not rows:
+        raise RuntimeError(f"Binance spot kline dataset for {symbol} is empty.")
+
     frame = pd.DataFrame(
-        {
-            "date": pd.to_datetime(result["timestamp"], unit="s", utc=True).tz_localize(None),
-            "open": quote["open"],
-            "high": quote["high"],
-            "low": quote["low"],
-            "close": quote["close"],
-            "volume": quote["volume"],
-        }
+        [
+            {
+                "date": pd.to_datetime(int(row[0]), unit="ms", utc=True).tz_localize(None),
+                "open": row[1],
+                "high": row[2],
+                "low": row[3],
+                "close": row[4],
+                "volume": row[5],
+                "quote_asset_volume": row[7],
+                "trade_count": row[8],
+                "taker_buy_base_volume": row[9],
+                "taker_buy_quote_volume": row[10],
+            }
+            for row in rows
+        ]
     )
-    frame = frame.dropna(subset=["open", "high", "low", "close", "volume"])
-    if frame.empty:
-        raise RuntimeError("Yahoo chart dataset is empty after dropping missing OHLCV rows.")
-    return normalize_ohlcv_frame(frame)
+    return normalize_spot_frame(frame)
+
+
+def normalize_funding_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    normalized = frame.copy()
+    normalized.columns = [column.lower() for column in normalized.columns]
+    expected = ["date", "funding_rate", "mark_price"]
+    missing = [column for column in expected if column not in normalized.columns]
+    if missing:
+        raise RuntimeError(f"Downloaded Binance funding dataset missing columns: {missing}")
+    normalized = normalized[expected].copy()
+    normalized["date"] = pd.to_datetime(normalized["date"])
+    normalized["funding_rate"] = pd.to_numeric(normalized["funding_rate"], errors="coerce")
+    normalized["mark_price"] = pd.to_numeric(normalized["mark_price"], errors="coerce")
+    normalized = normalized.dropna(subset=["date", "funding_rate"])
+    normalized = normalized.sort_values("date").reset_index(drop=True)
+    return normalized
+
+
+def download_funding_from_binance(symbol: str, start_date: str) -> pd.DataFrame:
+    start_time_ms = int(datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc).timestamp() * 1000)
+    now_ms = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
+    rows: list[dict[str, object]] = []
+
+    while start_time_ms < now_ms:
+        payload = fetch_json(binance_funding_url(symbol, start_time_ms=start_time_ms, limit=1000))
+        if not isinstance(payload, list) or not payload:
+            break
+        rows.extend(payload)
+        last_funding_time = int(payload[-1]["fundingTime"])
+        next_funding_time = last_funding_time + 1
+        if next_funding_time <= start_time_ms:
+            break
+        start_time_ms = next_funding_time
+        if len(payload) < 1000:
+            break
+
+    if not rows:
+        raise RuntimeError(f"Binance funding-rate dataset for {symbol} is empty.")
+
+    frame = pd.DataFrame(
+        [
+            {
+                "date": pd.to_datetime(int(row["fundingTime"]), unit="ms", utc=True).tz_localize(None).normalize(),
+                "funding_rate": row["fundingRate"],
+                "mark_price": row.get("markPrice"),
+            }
+            for row in rows
+        ]
+    )
+    return normalize_funding_frame(frame)
+
+
+def normalize_open_interest_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    normalized = frame.copy()
+    normalized.columns = [column.lower() for column in normalized.columns]
+    expected = ["date", "open_interest", "open_interest_value"]
+    missing = [column for column in expected if column not in normalized.columns]
+    if missing:
+        raise RuntimeError(f"Downloaded Binance open-interest dataset missing columns: {missing}")
+    normalized = normalized[expected].copy()
+    normalized["date"] = pd.to_datetime(normalized["date"])
+    normalized["open_interest"] = pd.to_numeric(normalized["open_interest"], errors="coerce")
+    normalized["open_interest_value"] = pd.to_numeric(normalized["open_interest_value"], errors="coerce")
+    normalized = normalized.dropna(subset=["date", "open_interest"])
+    normalized = normalized.sort_values("date").drop_duplicates(subset="date", keep="last").reset_index(drop=True)
+    return normalized
+
+
+def download_open_interest_from_binance(symbol: str) -> pd.DataFrame:
+    payload = fetch_json(binance_open_interest_hist_url(symbol, limit=500))
+    if not isinstance(payload, list) or not payload:
+        raise RuntimeError(f"Binance open-interest history dataset for {symbol} is empty.")
+    frame = pd.DataFrame(
+        [
+            {
+                "date": pd.to_datetime(int(row["timestamp"]), unit="ms", utc=True).tz_localize(None).normalize(),
+                "open_interest": row["sumOpenInterest"],
+                "open_interest_value": row["sumOpenInterestValue"],
+            }
+            for row in payload
+        ]
+    )
+    return normalize_open_interest_frame(frame)
+
+
+def normalize_taker_flow_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    normalized = frame.copy()
+    normalized.columns = [column.lower() for column in normalized.columns]
+    expected = ["date", "taker_buy_sell_ratio", "taker_buy_volume", "taker_sell_volume"]
+    missing = [column for column in expected if column not in normalized.columns]
+    if missing:
+        raise RuntimeError(f"Downloaded Binance taker-flow dataset missing columns: {missing}")
+    normalized = normalized[expected].copy()
+    normalized["date"] = pd.to_datetime(normalized["date"])
+    for column in ["taker_buy_sell_ratio", "taker_buy_volume", "taker_sell_volume"]:
+        normalized[column] = pd.to_numeric(normalized[column], errors="coerce")
+    normalized = normalized.dropna(subset=["date", "taker_buy_sell_ratio"])
+    normalized = normalized.sort_values("date").drop_duplicates(subset="date", keep="last").reset_index(drop=True)
+    return normalized
+
+
+def download_taker_flow_from_binance(symbol: str) -> pd.DataFrame:
+    payload = fetch_json(binance_taker_flow_url(symbol, limit=500))
+    if not isinstance(payload, list) or not payload:
+        raise RuntimeError(f"Binance taker-flow dataset for {symbol} is empty.")
+    frame = pd.DataFrame(
+        [
+            {
+                "date": pd.to_datetime(int(row["timestamp"]), unit="ms", utc=True).tz_localize(None).normalize(),
+                "taker_buy_sell_ratio": row["buySellRatio"],
+                "taker_buy_volume": row["buyVol"],
+                "taker_sell_volume": row["sellVol"],
+            }
+            for row in payload
+        ]
+    )
+    return normalize_taker_flow_frame(frame)
 
 
 def download_symbol_prices(asset_key: str | None = None) -> pd.DataFrame:
     key = asset_key or ac.get_asset_key()
-    symbol = ac.get_asset_symbol(key)
-    cache_path = ac.get_raw_data_path(key)
+    config = get_runtime_config(key)
+    binance_symbol = str(config["binance_symbol"])
+    start_date = str(config["binance_start_date"])
+    cache_path = ac.get_spot_data_path(key)
     ensure_cache_dir(key)
     try:
-        frame = download_prices_from_yahoo(symbol)
+        frame = download_prices_from_binance(binance_symbol, start_date)
     except (HTTPError, URLError, TimeoutError, ValueError, KeyError, IndexError, TypeError):
         if not cache_path.exists():
             raise
         frame = pd.read_csv(cache_path)
         if frame.empty:
-            raise RuntimeError(f"Cached {symbol} dataset is empty.")
-        frame = normalize_ohlcv_frame(frame)
+            raise RuntimeError(f"Cached {binance_symbol} dataset is empty.")
+        frame = normalize_spot_frame(frame)
+    frame.to_csv(cache_path, index=False)
+    return frame
+
+
+def download_funding_rates(asset_key: str | None = None) -> pd.DataFrame:
+    key = asset_key or ac.get_asset_key()
+    config = get_runtime_config(key)
+    binance_symbol = str(config["binance_symbol"])
+    start_date = str(config["binance_start_date"])
+    cache_path = ac.get_funding_data_path(key)
+    ensure_cache_dir(key)
+    try:
+        frame = download_funding_from_binance(binance_symbol, start_date)
+    except (HTTPError, URLError, TimeoutError, ValueError, KeyError, IndexError, TypeError):
+        if not cache_path.exists():
+            raise
+        frame = pd.read_csv(cache_path)
+        if frame.empty:
+            raise RuntimeError(f"Cached funding-rate dataset for {binance_symbol} is empty.")
+        frame = normalize_funding_frame(frame)
+    frame.to_csv(cache_path, index=False)
+    return frame
+
+
+def download_open_interest(asset_key: str | None = None) -> pd.DataFrame:
+    key = asset_key or ac.get_asset_key()
+    config = get_runtime_config(key)
+    binance_symbol = str(config["binance_symbol"])
+    cache_path = ac.get_open_interest_data_path(key)
+    ensure_cache_dir(key)
+    try:
+        frame = download_open_interest_from_binance(binance_symbol)
+    except (HTTPError, URLError, TimeoutError, ValueError, KeyError, IndexError, TypeError):
+        if not cache_path.exists():
+            raise
+        frame = pd.read_csv(cache_path)
+        if frame.empty:
+            raise RuntimeError(f"Cached open-interest dataset for {binance_symbol} is empty.")
+        frame = normalize_open_interest_frame(frame)
+    frame.to_csv(cache_path, index=False)
+    return frame
+
+
+def download_taker_flow(asset_key: str | None = None) -> pd.DataFrame:
+    key = asset_key or ac.get_asset_key()
+    config = get_runtime_config(key)
+    binance_symbol = str(config["binance_symbol"])
+    cache_path = ac.get_taker_flow_data_path(key)
+    ensure_cache_dir(key)
+    try:
+        frame = download_taker_flow_from_binance(binance_symbol)
+    except (HTTPError, URLError, TimeoutError, ValueError, KeyError, IndexError, TypeError):
+        if not cache_path.exists():
+            raise
+        frame = pd.read_csv(cache_path)
+        if frame.empty:
+            raise RuntimeError(f"Cached taker-flow dataset for {binance_symbol} is empty.")
+        frame = normalize_taker_flow_frame(frame)
     frame.to_csv(cache_path, index=False)
     return frame
 
@@ -320,9 +587,131 @@ def add_price_features(frame: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def add_funding_features(frame: pd.DataFrame, funding_frame: pd.DataFrame | None) -> pd.DataFrame:
+    df = frame.copy()
+    if funding_frame is None or funding_frame.empty:
+        df["funding_rate_1d"] = 0.0
+        df["funding_rate_3d_mean"] = 0.0
+        df["funding_rate_7d_mean"] = 0.0
+        df["funding_rate_z_7"] = 0.0
+        return df
+
+    daily_funding = (
+        funding_frame.groupby("date", as_index=False)
+        .agg(
+            funding_rate_1d=("funding_rate", "sum"),
+            funding_rate_mean=("funding_rate", "mean"),
+            funding_prints=("funding_rate", "count"),
+            funding_mark_price=("mark_price", "mean"),
+        )
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
+    daily_funding["funding_rate_3d_mean"] = daily_funding["funding_rate_1d"].rolling(3).mean()
+    daily_funding["funding_rate_7d_mean"] = daily_funding["funding_rate_1d"].rolling(7).mean()
+    daily_funding["funding_rate_z_7"] = (
+        daily_funding["funding_rate_1d"] - daily_funding["funding_rate_1d"].rolling(7).mean()
+    ) / (daily_funding["funding_rate_1d"].rolling(7).std() + 1e-10)
+
+    merged = df.merge(
+        daily_funding[
+            [
+                "date",
+                "funding_rate_1d",
+                "funding_rate_3d_mean",
+                "funding_rate_7d_mean",
+                "funding_rate_z_7",
+            ]
+        ],
+        on="date",
+        how="left",
+    )
+    for column in ["funding_rate_1d", "funding_rate_3d_mean", "funding_rate_7d_mean", "funding_rate_z_7"]:
+        merged[column] = merged[column].fillna(0.0)
+    return merged
+
+
+def add_open_interest_features(frame: pd.DataFrame, open_interest_frame: pd.DataFrame | None) -> pd.DataFrame:
+    df = frame.copy()
+    if open_interest_frame is None or open_interest_frame.empty:
+        df["open_interest"] = 0.0
+        df["open_interest_value"] = 0.0
+        df["open_interest_change_1"] = 0.0
+        df["open_interest_change_3"] = 0.0
+        df["open_interest_z_7"] = 0.0
+        return df
+
+    oi = open_interest_frame.sort_values("date").reset_index(drop=True).copy()
+    oi["open_interest_change_1"] = oi["open_interest"].pct_change(1)
+    oi["open_interest_change_3"] = oi["open_interest"].pct_change(3)
+    oi["open_interest_z_7"] = (
+        oi["open_interest"] - oi["open_interest"].rolling(7).mean()
+    ) / (oi["open_interest"].rolling(7).std() + 1e-10)
+
+    merged = df.merge(
+        oi[
+            [
+                "date",
+                "open_interest",
+                "open_interest_value",
+                "open_interest_change_1",
+                "open_interest_change_3",
+                "open_interest_z_7",
+            ]
+        ],
+        on="date",
+        how="left",
+    )
+    for column in [
+        "open_interest",
+        "open_interest_value",
+        "open_interest_change_1",
+        "open_interest_change_3",
+        "open_interest_z_7",
+    ]:
+        merged[column] = merged[column].fillna(0.0)
+    return merged
+
+
+def add_taker_flow_features(frame: pd.DataFrame, taker_flow_frame: pd.DataFrame | None) -> pd.DataFrame:
+    df = frame.copy()
+    if taker_flow_frame is None or taker_flow_frame.empty:
+        df["taker_buy_sell_ratio"] = 0.0
+        df["taker_buy_volume"] = 0.0
+        df["taker_sell_volume"] = 0.0
+        df["taker_flow_3d_mean"] = 0.0
+        return df
+
+    taker = taker_flow_frame.sort_values("date").reset_index(drop=True).copy()
+    taker["taker_flow_3d_mean"] = taker["taker_buy_sell_ratio"].rolling(3).mean()
+
+    merged = df.merge(
+        taker[
+            [
+                "date",
+                "taker_buy_sell_ratio",
+                "taker_buy_volume",
+                "taker_sell_volume",
+                "taker_flow_3d_mean",
+            ]
+        ],
+        on="date",
+        how="left",
+    )
+    for column in ["taker_buy_sell_ratio", "taker_buy_volume", "taker_sell_volume", "taker_flow_3d_mean"]:
+        merged[column] = merged[column].fillna(0.0)
+    return merged
+
+
 def add_features(frame: pd.DataFrame, asset_key: str | None = None) -> pd.DataFrame:
     config = get_runtime_config(asset_key)
     df = add_price_features(frame)
+    funding_frame = download_funding_rates(asset_key)
+    open_interest_frame = download_open_interest(asset_key)
+    taker_flow_frame = download_taker_flow(asset_key)
+    df = add_funding_features(df, funding_frame)
+    df = add_open_interest_features(df, open_interest_frame)
+    df = add_taker_flow_features(df, taker_flow_frame)
 
     long_labels, long_realized_returns = build_barrier_labels(
         df,
@@ -374,6 +763,11 @@ def save_processed_dataset(df: pd.DataFrame, asset_key: str | None = None) -> No
     metadata = {
         "asset_key": str(config["asset_key"]),
         "symbol": str(config["symbol"]),
+        "binance_symbol": str(config["binance_symbol"]),
+        "price_source": "binance_spot_klines",
+        "funding_source": "binance_funding_rate_history",
+        "open_interest_source": "binance_open_interest_hist_1d_last_month",
+        "taker_flow_source": "binance_taker_buy_sell_1d_last_month",
         "horizon_bars": int(config["horizon_bars"]),
         "long_up_barrier": float(config["long_up_barrier"]),
         "long_down_barrier": float(config["long_down_barrier"]),
@@ -438,7 +832,7 @@ def main() -> None:
     key = ac.get_asset_key()
     config = get_runtime_config(key)
     symbol = str(config["symbol"])
-    print(f"Downloading {symbol} daily prices...")
+    print(f"Downloading {symbol} daily prices from Binance spot...")
     raw = download_symbol_prices(key)
     processed = add_features(raw, key)
     save_processed_dataset(processed, key)

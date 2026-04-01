@@ -45,6 +45,7 @@ This keeps the research loop simple while still enabling bidirectional signals.
 - `score_results.py`: refreshes headline scores and promotion gates
 - `task.md`: current shared implementation and research queue
 - `ideas.md`: parking lot for future experiments
+- `binance_plan.md`: next-step schema and migration plan for Binance market data
 - `assets/btc/`
 - `assets/eth/`
 
@@ -63,3 +64,16 @@ Each asset folder keeps its own:
 3. Train a baseline classifier for each side.
 4. Combine the two side scores into one live trading decision.
 5. Validate that signal frequency and class balance are sane before any heavier backtesting.
+
+## Next Data Upgrade
+
+The current version uses Yahoo daily OHLCV as a baseline source.
+
+The planned source upgrade is documented in [binance_plan.md](C:\Users\Jay\OneDrive\文件\codex\web3-swing-entry\binance_plan.md).
+
+That migration is intended to add:
+
+- Binance spot klines
+- funding rate
+- open interest
+- taker buy/sell flow

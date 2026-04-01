@@ -1,6 +1,8 @@
 {
   "asset_key": "btc",
   "symbol": "BTC-USD",
+  "binance_symbol": "BTCUSDT",
+  "binance_start_date": "2014-01-01",
   "horizon_bars": 7,
   "long_up_barrier": 0.05,
   "long_down_barrier": -0.025,

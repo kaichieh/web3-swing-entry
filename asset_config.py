@@ -10,6 +10,8 @@ from pathlib import Path
 class AssetDefaults:
     key: str
     symbol: str
+    binance_symbol: str
+    binance_start_date: str
     horizon_bars: int
     long_up_barrier: float
     long_down_barrier: float
@@ -23,6 +25,8 @@ ASSET_DEFAULTS: dict[str, AssetDefaults] = {
     "btc": AssetDefaults(
         key="btc",
         symbol="BTC-USD",
+        binance_symbol="BTCUSDT",
+        binance_start_date="2014-01-01",
         horizon_bars=7,
         long_up_barrier=0.05,
         long_down_barrier=-0.025,
@@ -33,6 +37,8 @@ ASSET_DEFAULTS: dict[str, AssetDefaults] = {
     "eth": AssetDefaults(
         key="eth",
         symbol="ETH-USD",
+        binance_symbol="ETHUSDT",
+        binance_start_date="2017-01-01",
         horizon_bars=7,
         long_up_barrier=0.06,
         long_down_barrier=-0.03,
@@ -63,6 +69,8 @@ def load_asset_config(asset_key: str | None = None) -> dict[str, object]:
     config: dict[str, object] = {
         "asset_key": defaults.key,
         "symbol": defaults.symbol,
+        "binance_symbol": defaults.binance_symbol,
+        "binance_start_date": defaults.binance_start_date,
         "horizon_bars": defaults.horizon_bars,
         "long_up_barrier": defaults.long_up_barrier,
         "long_down_barrier": defaults.long_down_barrier,
@@ -80,19 +88,42 @@ def get_asset_symbol(asset_key: str | None = None) -> str:
     return str(load_asset_config(asset_key)["symbol"])
 
 
+def get_binance_symbol(asset_key: str | None = None) -> str:
+    return str(load_asset_config(asset_key)["binance_symbol"])
+
+
 def get_cache_dir(asset_key: str | None = None) -> Path:
     key = asset_key or get_asset_key()
     return REPO_DIR / ".cache" / f"{key}-swing-entry"
 
 
-def get_raw_data_path(asset_key: str | None = None) -> Path:
+def get_spot_data_path(asset_key: str | None = None) -> Path:
     key = asset_key or get_asset_key()
-    return get_cache_dir(key) / f"{key}_daily.csv"
+    return get_cache_dir(key) / f"{key}_spot_daily.csv"
+
+
+def get_raw_data_path(asset_key: str | None = None) -> Path:
+    return get_spot_data_path(asset_key)
 
 
 def get_processed_data_path(asset_key: str | None = None) -> Path:
     key = asset_key or get_asset_key()
     return get_cache_dir(key) / f"{key}_features.csv"
+
+
+def get_funding_data_path(asset_key: str | None = None) -> Path:
+    key = asset_key or get_asset_key()
+    return get_cache_dir(key) / f"{key}_funding_daily.csv"
+
+
+def get_open_interest_data_path(asset_key: str | None = None) -> Path:
+    key = asset_key or get_asset_key()
+    return get_cache_dir(key) / f"{key}_open_interest_daily.csv"
+
+
+def get_taker_flow_data_path(asset_key: str | None = None) -> Path:
+    key = asset_key or get_asset_key()
+    return get_cache_dir(key) / f"{key}_taker_flow_daily.csv"
 
 
 def get_metadata_path(asset_key: str | None = None) -> Path:

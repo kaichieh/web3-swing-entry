@@ -1,6 +1,8 @@
 {
   "asset_key": "eth",
   "symbol": "ETH-USD",
+  "binance_symbol": "ETHUSDT",
+  "binance_start_date": "2017-01-01",
   "horizon_bars": 7,
   "long_up_barrier": 0.06,
   "long_down_barrier": -0.03,

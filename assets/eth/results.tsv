@@ -1,1 +1,14 @@
 commit_id	description	validation_long_f1	validation_long_bal_acc	validation_short_f1	validation_short_bal_acc	test_long_f1	test_long_bal_acc	test_short_f1	test_short_bal_acc	status
+4468a2c	baseline_weekly_logistic_v1_7bar_6pct_3pct	0.5742	0.5348	0.8145	0.5000	0.5399	0.5399	0.7637	0.5000	discard
+4468a2c	binance_spot_funding_oi_taker_logistic_v1_33f	0.5939	0.5680	0.8268	0.5106	0.4749	0.4891	0.7604	0.5093	discard
+4468a2c	short_calibration_pos0p9_neg1p1_thr0p60_0p95	na	na	0.5056	0.4958	na	na	0.4242	0.4718	discard
+4468a2c	binance_funding_only_long_v1	0.5939	0.5680	na	na	0.4749	0.4891	na	na	discard
+4468a2c	binance_oi_only_long_v1	0.5836	0.5165	na	na	0.5263	0.5179	na	na	discard
+4468a2c	binance_taker_only_long_v1	0.5836	0.5165	na	na	0.5263	0.5179	na	na	discard
+4468a2c	binance_compact_mix_long_v1	0.5836	0.5165	na	na	0.5263	0.5179	na	na	discard
+4468a2c	barrier_refit_h10_same_barriers_v1	0.5714	0.5116	0.8343	0.5131	0.5298	0.5098	0.7577	0.5004	discard
+4468a2c	barrier_refit_h7_tighter_5pct_2p5pct_v1	0.5743	0.5540	0.8220	0.5080	0.5111	0.5096	0.7791	0.4993	discard
+4468a2c	barrier_refit_h7_wider_7pct_3p5pct_v1	0.5821	0.5173	0.8134	0.5000	0.5365	0.5259	0.7544	0.5000	discard
+4468a2c	walkforward_eval_h7_wider_7pct_3p5pct_v1	0.4795	0.5673	0.4251	0.5458	0.3531	0.5062	0.3555	0.4969	discard
+4468a2c	tree_walkforward_h7_wider_7pct_3p5pct_v1	0.5539	0.5762	0.4412	0.5181	0.4326	0.5099	0.4274	0.5005	discard
+4468a2c	regime_filter_h7_wider_7pct_3p5pct_v1	na	0.5673	na	0.5045	na	0.5062	na	0.5032	discard

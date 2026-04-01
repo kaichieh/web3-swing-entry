@@ -48,6 +48,17 @@ class Metrics:
     avg_realized_return: float
 
 
+@dataclass
+class TrainedModel:
+    side: str
+    target_column: str
+    realized_return_column: str
+    feature_names: list[str]
+    weights: np.ndarray
+    threshold: float
+    best_epoch: int
+
+
 def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -163,6 +174,11 @@ def assemble_feature_matrices(
     return (*matrices, feature_names)
 
 
+def build_feature_names(splits: dict[str, object]) -> list[str]:
+    _, _, _, feature_names = assemble_feature_matrices(splits)
+    return feature_names
+
+
 def classification_stats(probabilities: np.ndarray, labels: np.ndarray, threshold: float) -> tuple[float, float, float, float, np.ndarray]:
     predictions = (probabilities >= threshold).astype(np.float32)
     tp = float(((predictions == 1) & (labels == 1)).sum())
@@ -215,24 +231,20 @@ def compute_metrics(logits: np.ndarray, labels: np.ndarray, realized_returns: np
     )
 
 
-def main() -> None:
-    seed = get_env_int("AR_SEED", SEED)
+def fit_model(side: str) -> tuple[TrainedModel, dict[str, object]]:
     learning_rate = get_env_float("AR_LEARNING_RATE", LEARNING_RATE)
     l2_reg = get_env_float("AR_L2_REG", L2_REG)
     pos_weight = get_env_float("AR_POS_WEIGHT", POS_WEIGHT)
     neg_weight = get_env_float("AR_NEG_WEIGHT", NEG_WEIGHT)
     max_epochs = get_env_int("AR_MAX_EPOCHS", MAX_EPOCHS)
     patience_limit = get_env_int("AR_PATIENCE", PATIENCE)
-    side = get_side()
     target_column = get_target_column(side)
     realized_return_column = get_realized_return_column(side)
 
-    set_seed(seed)
     splits = load_splits(target_column=target_column)
     train_x, validation_x, test_x, feature_names = assemble_feature_matrices(splits)
     train_y = splits["train"].labels
     validation_y = splits["validation"].labels
-    test_y = splits["test"].labels
 
     train_x, validation_x, test_x = standardize(train_x, validation_x, test_x)
     train_x, validation_x, test_x = add_interaction_terms(train_x, validation_x, test_x, feature_names)
@@ -274,23 +286,60 @@ def main() -> None:
         if epochs_without_improvement >= patience_limit:
             break
 
+    model = TrainedModel(
+        side=side,
+        target_column=target_column,
+        realized_return_column=realized_return_column,
+        feature_names=feature_names,
+        weights=best_weights,
+        threshold=best_threshold,
+        best_epoch=best_epoch,
+    )
+    transformed = {
+        "splits": splits,
+        "train_x": train_x,
+        "validation_x": validation_x,
+        "test_x": test_x,
+    }
+    return model, transformed
+
+
+def main() -> None:
+    seed = get_env_int("AR_SEED", SEED)
+    side = get_side()
+    learning_rate = get_env_float("AR_LEARNING_RATE", LEARNING_RATE)
+    l2_reg = get_env_float("AR_L2_REG", L2_REG)
+    pos_weight = get_env_float("AR_POS_WEIGHT", POS_WEIGHT)
+    neg_weight = get_env_float("AR_NEG_WEIGHT", NEG_WEIGHT)
+
+    set_seed(seed)
+    model, transformed = fit_model(side)
+    splits = transformed["splits"]
+    train_x = transformed["train_x"]
+    validation_x = transformed["validation_x"]
+    test_x = transformed["test_x"]
+    feature_names = model.feature_names
+    train_y = splits["train"].labels
+    validation_y = splits["validation"].labels
+    test_y = splits["test"].labels
+
     train_metrics = compute_metrics(
-        train_x @ best_weights,
+        train_x @ model.weights,
         train_y,
-        splits["train"].frame[realized_return_column].to_numpy(dtype=np.float32),
-        best_threshold,
+        splits["train"].frame[model.realized_return_column].to_numpy(dtype=np.float32),
+        model.threshold,
     )
     validation_metrics = compute_metrics(
-        validation_x @ best_weights,
+        validation_x @ model.weights,
         validation_y,
-        splits["validation"].frame[realized_return_column].to_numpy(dtype=np.float32),
-        best_threshold,
+        splits["validation"].frame[model.realized_return_column].to_numpy(dtype=np.float32),
+        model.threshold,
     )
     test_metrics = compute_metrics(
-        test_x @ best_weights,
+        test_x @ model.weights,
         test_y,
-        splits["test"].frame[realized_return_column].to_numpy(dtype=np.float32),
-        best_threshold,
+        splits["test"].frame[model.realized_return_column].to_numpy(dtype=np.float32),
+        model.threshold,
     )
 
     config = get_runtime_config()
@@ -298,15 +347,15 @@ def main() -> None:
     print("---")
     print(f"task:                 {symbol}_{int(config['horizon_bars'])}bar_weekly_{side}")
     print(f"side:                 {side}")
-    print(f"target_column:        {target_column}")
+    print(f"target_column:        {model.target_column}")
     print(f"model:                logistic_regression")
     print(f"features:             {len(feature_names)}")
     print(f"learning_rate:        {learning_rate}")
     print(f"l2_reg:               {l2_reg}")
     print(f"pos_weight:           {pos_weight}")
     print(f"neg_weight:           {neg_weight}")
-    print(f"decision_threshold:   {best_threshold:.3f}")
-    print(f"best_epoch:           {best_epoch}")
+    print(f"decision_threshold:   {model.threshold:.3f}")
+    print(f"best_epoch:           {model.best_epoch}")
     print(f"train_accuracy:       {train_metrics.accuracy:.4f}")
     print(f"validation_accuracy:  {validation_metrics.accuracy:.4f}")
     print(f"validation_f1:        {validation_metrics.f1:.4f}")
