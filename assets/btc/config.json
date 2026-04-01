@@ -1,0 +1,10 @@
+{
+  "asset_key": "btc",
+  "symbol": "BTC-USD",
+  "horizon_bars": 7,
+  "long_up_barrier": 0.05,
+  "long_down_barrier": -0.025,
+  "short_down_barrier": -0.05,
+  "short_up_barrier": 0.025,
+  "label_mode": "drop-neutral"
+}
